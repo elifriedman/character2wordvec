@@ -7,6 +7,7 @@
  */
 
 #include <iostream>
+#include <random>
 #include "corpus.h"
 
 Corpus::Corpus(const std::vector<std::string>& doc_names, const std::string& punc)
@@ -19,10 +20,22 @@ Corpus::Corpus(const std::vector<std::string>& doc_names, const std::string& pun
     }
     punc_d.freeze();
     std::vector<std::string>::const_iterator it;
+    std::map<int, double> freqs;
     for(it = doc_names.begin(); it != doc_names.end(); ++it) {
         std::ifstream doc(*it);
         words doc_contents = read_doc(doc);
         docs.push_back(doc_contents);
+
+        words::const_iterator wordItr;
+        for (wordItr = doc_contents.begin(); wordItr != doc_contents.end(); ++wordItr) {
+            freqs[word_d.convert(*wordItr)] += 1;
+        }
+    }
+
+    std::map<int, double>::const_iterator mapItr;
+    for (mapItr = freqs.begin(); mapItr != freqs.end(); ++mapItr) {
+        double frequency = mapItr->second;
+        wordfreq_d.push_back(frequency);
     }
 }
 
@@ -51,4 +64,34 @@ Corpus::words Corpus::read_doc(std::ifstream& doc)
     }
 
     return doc_contents;
+}
+
+std::vector<Corpus::datapoint> Corpus::makeDatasetNCE(int k)
+{
+    std::default_random_engine generator; // TODO choose seed
+    std::discrete_distribution<int> choose_word(wordfreq_d.begin(), wordfreq_d.end());
+
+    std::vector<datapoint> dataset;
+
+    std::vector<words>::const_iterator it;
+    for (it = docs.begin(); it != docs.end(); ++it) {
+
+        words::const_iterator wordItr;
+        for (wordItr = it->begin(); wordItr != it->end()-1; ++wordItr) {
+            std::string word = *wordItr;
+            std::string context = *(wordItr+1);
+            datapoint d = std::make_tuple(word, context, true, -1);
+            dataset.push_back(d);
+
+            for (int i = 0; i < k; ++i) { // make "fake" contexts
+                unsigned fake_context_idx = choose_word(generator);
+                double probability = wordfreq_d[fake_context_idx]; // TODO divide by total sum
+                std::string fake_context = word_d.convert(fake_context_idx);
+                datapoint fake_d = std::make_tuple(word, context, false, probability);
+                dataset.push_back(fake_d);
+            }
+        }
+    }
+
+    return dataset;
 }
