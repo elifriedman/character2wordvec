@@ -20,6 +20,19 @@ class Characters
         const std::string EOW = "</w>";
 
         inline
+        std::vector<int> word2idxvec(const std::string& word) 
+        {
+            std::vector<int> idxvec;
+            idxvec.push_back(convert(SOW));
+            std::string::const_iterator it;
+            for(it = word.begin(); it != word.end(); ++it) {
+                idxvec.push_back(convert(*it));
+            }
+            idxvec.push_back(convert(EOW));
+            return idxvec;
+        }
+
+        inline
         int convert(const std::string& character)
         {
             return chars_d.convert(character);

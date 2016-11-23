@@ -45,6 +45,9 @@ class BiRNNModel {
         Builder r2lbuilder;
 
         Expression build(const std::vector<int>& input, dynet::ComputationGraph& cg);
+        Expression getNCEModelOutput(const std::vector<int>& word,
+                                     const std::vector<int>& context,
+                                     dynet::ComputationGraph& cg);
 
 };
 
@@ -77,6 +80,19 @@ Expression BiRNNModel<Builder>::build(const std::vector<int>& input, dynet::Comp
                                                i_leftHidden2output, l2routput,
                                                i_rightHidden2output, r2loutput}));
     return output;
+}
+
+template <class Builder>
+Expression BiRNNModel<Builder>::getNCEModelOutput(const std::vector<int>& word,
+                                                  const std::vector<int>& context,
+                                                  dynet::ComputationGraph& cg)
+{
+    Expression word_lstm = build(word, cg);
+    Expression context_lstm = build(context, cg);
+    Expression concat = concatenate({word_lstm, context_lstm});
+
+    // TODO add model
+    return concat;
 }
 
 #endif // MODEL_H
