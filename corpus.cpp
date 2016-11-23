@@ -21,6 +21,7 @@ Corpus::Corpus(const std::vector<std::string>& doc_names, const std::string& pun
     punc_d.freeze();
     std::vector<std::string>::const_iterator it;
     std::map<int, double> freqs;
+    double total_sum = 0;
     for(it = doc_names.begin(); it != doc_names.end(); ++it) {
         std::ifstream doc(*it);
         words doc_contents = read_doc(doc);
@@ -29,13 +30,14 @@ Corpus::Corpus(const std::vector<std::string>& doc_names, const std::string& pun
         words::const_iterator wordItr;
         for (wordItr = doc_contents.begin(); wordItr != doc_contents.end(); ++wordItr) {
             freqs[word_d.convert(*wordItr)] += 1;
+            total_sum += 1;
         }
     }
 
     std::map<int, double>::const_iterator mapItr;
     for (mapItr = freqs.begin(); mapItr != freqs.end(); ++mapItr) {
         double frequency = mapItr->second;
-        wordfreq_d.push_back(frequency);
+        wordfreq_d.push_back(frequency / total_sum);
     }
 }
 
@@ -78,16 +80,19 @@ std::vector<Corpus::datapoint> Corpus::makeDatasetNCE(int k)
 
         words::const_iterator wordItr;
         for (wordItr = it->begin(); wordItr != it->end()-1; ++wordItr) {
-            std::string word = *wordItr;
-            std::string context = *(wordItr+1);
+
+            std::string word = *wordItr;    std::string context = *(wordItr+1);
+
             datapoint d = std::make_tuple(word, context, true, -1);
             dataset.push_back(d);
 
+            double probability = wordfreq_d[word_d.convert(word)]; // get q(word)
+
             for (int i = 0; i < k; ++i) { // make "fake" contexts
                 unsigned fake_context_idx = choose_word(generator);
-                double probability = wordfreq_d[fake_context_idx]; // TODO divide by total sum
                 std::string fake_context = word_d.convert(fake_context_idx);
-                datapoint fake_d = std::make_tuple(word, context, false, probability);
+
+                datapoint fake_d = std::make_tuple(word, fake_context, false, probability);
                 dataset.push_back(fake_d);
             }
         }
