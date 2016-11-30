@@ -34,12 +34,18 @@ class BiRNNModel {
             p_leftHidden2output = model.add_parameters({output_dim, hidden_dim});  // from hidden -> output
             p_rightHidden2output = model.add_parameters({output_dim, hidden_dim}); // from hidden -> output
             p_outputBias = model.add_parameters({output_dim}); // output bias
+
+            p_output = model.add_parameters({1, 2*output_dim});
+            p_bias = model.add_parameters({1});
         }
 
         dynet::LookupParameter p_embed;
         dynet::Parameter p_leftHidden2output;
         dynet::Parameter p_rightHidden2output;
         dynet::Parameter p_outputBias;
+
+        dynet::Parameter p_output;
+        dynet::Parameter p_bias;
 
         Builder l2rbuilder;
         Builder r2lbuilder;
@@ -49,15 +55,20 @@ class BiRNNModel {
                                      const std::vector<int>& context,
                                      dynet::ComputationGraph& cg);
 
+        // reset RNN builder for new graph
+        void new_graph(dynet::ComputationGraph& cg)
+        {
+            l2rbuilder.new_graph(cg);  
+            r2lbuilder.new_graph(cg); 
+        }
+
 };
 
 template <class Builder>
 Expression BiRNNModel<Builder>::build(const std::vector<int>& input, dynet::ComputationGraph& cg)
 {
     const unsigned len = input.size();
-    l2rbuilder.new_graph(cg);  // reset RNN builder for new graph
     l2rbuilder.start_new_sequence();
-    r2lbuilder.new_graph(cg);  // reset RNN builder for new graph
     r2lbuilder.start_new_sequence();
 
     Expression i_leftHidden2output  = parameter(cg, p_leftHidden2output);
@@ -90,9 +101,14 @@ Expression BiRNNModel<Builder>::getNCEModelOutput(const std::vector<int>& word,
     Expression word_lstm = build(word, cg);
     Expression context_lstm = build(context, cg);
     Expression concat = concatenate({word_lstm, context_lstm});
+    Expression i_output = parameter(cg, p_output);
+    Expression i_bias = parameter(cg, p_bias);
 
-    // TODO add model
-    return concat;
+    Expression tform = affine_transform({i_bias, i_output, concat});
+    Expression output = rectify(tform);
+
+    return output;
 }
+
 
 #endif // MODEL_H

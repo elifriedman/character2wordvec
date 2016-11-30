@@ -83,10 +83,11 @@ std::vector<Corpus::datapoint> Corpus::makeDatasetNCE(int k)
 
             std::string word = *wordItr;    std::string context = *(wordItr+1);
 
-            datapoint d = std::make_tuple(word, context, true, -1);
+            double probability = wordfreq_d[word_d.convert(word)]; // get q(word)
+
+            datapoint d = std::make_tuple(word, context, true, probability);
             dataset.push_back(d);
 
-            double probability = wordfreq_d[word_d.convert(word)]; // get q(word)
 
             for (int i = 0; i < k; ++i) { // make "fake" contexts
                 unsigned fake_context_idx = choose_word(generator);

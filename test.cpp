@@ -18,16 +18,21 @@ using namespace dynet;
 using namespace dynet::expr;
 
 template <class Builder>
-Expression calculateNCELoss(std::vector<Corpus::datapoint>::const_iterator& begin,
-                            std::vector<Corpus::datapoint>::const_iterator& end,
+double calculateNCELoss(std::vector<Corpus::datapoint>::const_iterator begin,
+                            std::vector<Corpus::datapoint>::const_iterator end,
                             int k,
                             Characters& chars,
                             BiRNNModel<Builder>& model,
-                            ComputationGraph& cg)
+                            ComputationGraph& cg,
+                            int* accuracy,
+                            double* output_scalar)
 {
+    std::vector<Expression> losses;
+
     std::vector<Corpus::datapoint>::const_iterator it;
-//    Expression loss = 0;
+    double size = end - begin;
     for(it = begin; it != end; ++it) {
+
         const std::string& word = std::get<Corpus::WORD_IDX>(*it);
         std::vector<int> wordVec = chars.word2idxvec(word);
 
@@ -35,23 +40,29 @@ Expression calculateNCELoss(std::vector<Corpus::datapoint>::const_iterator& begi
         std::vector<int> contextVec = chars.word2idxvec(context);
 
         bool is_real = std::get<Corpus::IS_REAL_IDX>(*it);
-        double probability = std::get<Corpus::PROB_CONTEXT_IDX>(*it);
+        Expression probability = input(cg, std::get<Corpus::PROB_CONTEXT_IDX>(*it));
 
         Expression output = model.getNCEModelOutput(wordVec, contextVec, cg);
 
+        Expression loss;
         if (is_real) {
-            // TODO loss += output / (output + k*probability)
+            loss = 1 - output; //cdiv(output,  (output + k*probability));
         }
         else {
-            // TODO loss += k*probability / (output + k*probability)
+            loss = output; //cdiv(k*probability, (output + k*probability));
         }
-//        std::cout << std::get<Corpus::WORD_IDX>(*it) << " "
-//                  << std::get<Corpus::CONTEXT_IDX>(*it) << " "
-//                  << std::get<Corpus::IS_REAL_IDX>(*it) << " "
-//                  << std::get<Corpus::PROB_CONTEXT_IDX>(*it) << "\n";
+        losses.push_back(loss);
+
+        *output_scalar = as_scalar(cg.incremental_forward(output));
+        bool predict = *output_scalar >= 0.5;
+//        std::cout << word << " : " << context << " . " << predict << " -- " << is_real << "\n";
+        *accuracy += (predict == is_real);
     }
 
-    return loss;
+    Expression total_loss = sum(losses);
+    double loss_scalar = as_scalar(cg.incremental_forward(total_loss));
+    cg.backward(total_loss);
+    return loss_scalar;
 }
 
 int main(int argc, char** argv) {
@@ -64,83 +75,67 @@ int main(int argc, char** argv) {
     Corpus docs(fnames, ".,()`\"");
 
     dynet::initialize(argc, argv);
+    std::cout << "Loading dataset...\n";
     std::vector<Corpus::datapoint> dataset = docs.makeDatasetNCE(3);
+    std::cout << "Loaded dataset.\n";
     
-    std::vector<Corpus::datapoint>::const_iterator it;
-    for(it = dataset.begin(); it != dataset.end(); ++it) {
-//        std::cout << std::get<Corpus::WORD_IDX>(*it) << " "
-//                  << std::get<Corpus::CONTEXT_IDX>(*it) << " "
-//                  << std::get<Corpus::IS_REAL_IDX>(*it) << " "
-//                  << std::get<Corpus::PROB_CONTEXT_IDX>(*it) << "\n";
-    }
-//
-//    // parameters
-    ComputationGraph cg;
     Model model;
+    BiRNNModel<LSTMBuilder> bilstm(model,
+                                   1, // # layers
+                                   16, // input dim
+                                   128, // hidden dim
+                                   128, // output dim
+                                   chars.size()); // # chars
 
-    bool use_momentum = true;
+
+    bool use_momentum = false;
     Trainer* sgd = nullptr;
     if (use_momentum)
       sgd = new MomentumSGDTrainer(&model);
     else
-      sgd = new SimpleSGDTrainer(&model);
+      sgd = new AdagradTrainer(&model);
+//      sgd = new SimpleSGDTrainer(&model);
 
-    BiRNNModel<LSTMBuilder> bilstm(model,
-                                   1, // # layers
-                                   2, // input dim
-                                   5, // hidden dim
-                                   3, // output dim
-                                   chars.size()); // # chars
+    int iteration_num = 0;
+    unsigned batch_size = 100;
+    bool first = true;
+    std::cout << "size = " << dataset.size() << "\n";
+    
+    while(1) {
+        double loss_scalar = 0;
+        int accuracy = 0;
+        double avg_output = 0;
+        if (first) { first = false; } else { sgd->update_epoch(); }
+        shuffle(dataset.begin(), dataset.end(), *rndeng);
+        std::cout << "Iteration #" << iteration_num << ":\n";
+        std::vector<Corpus::datapoint>::const_iterator it = dataset.begin();
+        unsigned i = 0;
+        for (; i < dataset.size(); it += batch_size, i += batch_size) {
+            // build graph for this instance
+            std::cout << i << ": ";
+            ComputationGraph cg;
+            bilstm.new_graph(cg);
+            int cur_accuracy = 0;
+            double cur_output = 0;
+            double cur_loss = calculateNCELoss(it, it + batch_size,
+                                               1, // k
+                                               chars, bilstm, cg,
+                                               &cur_accuracy, &cur_output);
+            accuracy += cur_accuracy;
+            loss_scalar += cur_loss;
+            std::cout  << "curr_loss: " << cur_loss
+                       << ", accuracy: " << cur_accuracy
+                       << ", avg_output: " << cur_output / batch_size;
+                      
+            std::cout << ", grad_l2_norm: " << model.gradient_l2_norm()
+                      << "\n";
+            sgd->update();
+       }
 
-//    unsigned report_every_i = 50;
-//    unsigned dev_every_i_reports = 25;
-//    unsigned si = training.size();
-//    vector<unsigned> order(training.size());
-//    for (unsigned i = 0; i < order.size(); ++i) order[i] = i;
-//    bool first = true;
-//    int report = 0;
-//    unsigned lines = 0;
-//    while(1) {
-//      Timer iteration("completed in");
-//      double loss = 0;
-//      for (unsigned i = 0; i < report_every_i; ++i) {
-//        if (si == dataset.size()) {
-//            si = 0;
-//            if (first) { first = false; } else { sgd->update_epoch(); }
-//            shuffle(order.begin(), order.end(), *rndeng);
-//        }
-//  
-//        // build graph for this instance
-//        ComputationGraph cg;
-//        auto& sent = training[order[si]];
-//        ++si;
-//      }
-//    }
-
-//    std::string text = "hello!";
-//    std::vector<int> input;
-//    for(unsigned i = 0; i < text.size(); ++i) {
-//        int idx = chars.convert(text[i]);
-//        std::cout << text[i] << " - " << idx << "\n";
-//        input.push_back(idx);
-//    }
-//
-//    Expression output = bilstm.build(input, cg);
-//    std::cout << cg.forward(output) << "\n";
-//  SimpleSGDTrainer sgd(&model);
-//  //MomentumSGDTrainer sgd(&m);
-//
-//  ComputationGraph cg;
-//  LookupParameter p = model.add_lookup_parameters(2, {5});
-//
-//  unsigned idx = 0;
-//  Expression x = lookup(cg, p, idx);
-//
-//  cg.print_graphviz();
-//  auto vec = as_vector(cg.forward(x));
-//  for(unsigned i=0; i < vec.size(); ++i) {
-//      cout << vec[i] << ",";
-//  }
-//  cout << "\n";
+        std::cout << "Loss = " << loss_scalar / dataset.size() 
+                  << ", Accuracy = " << ((double)accuracy) / dataset.size()
+                  << "\n";
+        iteration_num++;
+    }
 }
 
