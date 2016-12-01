@@ -41,6 +41,7 @@ from six.moves import xrange  # pylint: disable=redefined-builtin
 
 import numpy as np
 import tensorflow as tf
+import char_rnn
 
 from tensorflow.models.embedding import gen_word2vec as word2vec
 
@@ -162,7 +163,7 @@ class Word2Vec(object):
     self._word2id = {}
     self._id2word = []
     self.build_graph()
-    self.build_eval_graph()
+#    self.build_eval_graph()
     self.save_vocab()
 
   def read_analogies(self):
@@ -196,19 +197,19 @@ class Word2Vec(object):
 
     # Embedding: [vocab_size, emb_dim]
     init_width = 0.5 / opts.emb_dim
-    emb = tf.Variable(
-        tf.random_uniform(
-            [opts.vocab_size, opts.emb_dim], -init_width, init_width),
-        name="emb")
-    self._emb = emb
-
-    # Softmax weight: [vocab_size, emb_dim]. Transposed.
-    sm_w_t = tf.Variable(
-        tf.zeros([opts.vocab_size, opts.emb_dim]),
-        name="sm_w_t")
-
-    # Softmax bias: [emb_dim].
-    sm_b = tf.Variable(tf.zeros([opts.vocab_size]), name="sm_b")
+#COMMENTED    emb = tf.Variable(
+#        tf.random_uniform(
+#            [opts.vocab_size, opts.emb_dim], -init_width, init_width),
+#        name="emb")
+#    self._emb = emb
+#
+#    # Softmax weight: [vocab_size, emb_dim]. Transposed.
+#    sm_w_t = tf.Variable(
+#        tf.zeros([opts.vocab_size, opts.emb_dim]),
+#        name="sm_w_t")
+#
+#    # Softmax bias: [emb_dim].
+#    sm_b = tf.Variable(tf.zeros([opts.vocab_size]), name="sm_b")
 
     # Global step: scalar, i.e., shape [].
     self.global_step = tf.Variable(0, name="global_step")
@@ -229,29 +230,35 @@ class Word2Vec(object):
         distortion=0.75,
         unigrams=opts.vocab_counts.tolist()))
 
+    example_words = tf.gather(words, examples)
+    label_words = tf.gather(words, labels)
+    sampled_words = tf.gather(words, sampled_ids)
+
     # Embeddings for examples: [batch_size, emb_dim]
-    example_emb = tf.nn.embedding_lookup(emb, examples) # TODO replace w/ LSTM output
+#COMMENTED    example_emb = tf.nn.embedding_lookup(emb, examples) # TODO replace w/ LSTM output
+    example_emb = char_rnn.recurrent_model(opts.emb_dim, example_words, max_wordlen, "example")
 
-    # Weights for labels: [batch_size, emb_dim]
-    true_w = tf.nn.embedding_lookup(sm_w_t, labels)
-    # Biases for labels: [batch_size, 1]
-    true_b = tf.nn.embedding_lookup(sm_b, labels)
+#COMMENTED    # Weights for labels: [batch_size, emb_dim]
+#    true_w = tf.nn.embedding_lookup(sm_w_t, labels)
+#    # Biases for labels: [batch_size, 1]
+#    true_b = tf.nn.embedding_lookup(sm_b, labels)
+    labels_emb = char_rnn.recurrent_model(opts.emb_dim, label_words, max_wordlen, "labels")
 
-    # Weights for sampled ids: [num_sampled, emb_dim]
-    sampled_w = tf.nn.embedding_lookup(sm_w_t, sampled_ids)
-    # Biases for sampled ids: [num_sampled, 1]
-    sampled_b = tf.nn.embedding_lookup(sm_b, sampled_ids)
+#COMMENTED    # Weights for sampled ids: [num_sampled, emb_dim]
+#    sampled_w = tf.nn.embedding_lookup(sm_w_t, sampled_ids)
+#    # Biases for sampled ids: [num_sampled, 1]
+#    sampled_b = tf.nn.embedding_lookup(sm_b, sampled_ids)
+    sampled_emb = char_rnn.recurrent_model(opts.emb_dim, sampled_words, max_wordlen, "sampled")
 
     # True logits: [batch_size, 1]
-    true_logits = tf.reduce_sum(tf.mul(example_emb, true_w), 1) + true_b
+    true_logits = tf.reduce_sum(tf.mul(example_emb, labels_emb), 1)
 
     # Sampled logits: [batch_size, num_sampled]
     # We replicate sampled noise labels for all examples in the batch
     # using the matmul.
-    sampled_b_vec = tf.reshape(sampled_b, [opts.num_samples])
     sampled_logits = tf.matmul(example_emb,
-                               sampled_w,
-                               transpose_b=True) + sampled_b_vec
+                               sampled_emb,
+                               transpose_b=True)
     return true_logits, sampled_logits
 
   def nce_loss(self, true_logits, sampled_logits):

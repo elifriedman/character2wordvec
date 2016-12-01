@@ -7,11 +7,16 @@
 using namespace tensorflow;
 
 REGISTER_OP("WordToIdx")
-.Attr("max_wordlen: int")
 .Input("words: string")
+.Input("max_wordlen: int32")
 .Output("word_idxs: int32")
-.SetShapeFn([](::tensorflow::shape_inference::InferenceContext* c) {
-    c->set_output(0, c->input(0));
+.SetShapeFn([](shape_inference::InferenceContext* c) {
+    shape_inference::DimensionHandle max_wordlen;
+    TF_RETURN_IF_ERROR(c->MakeDimForScalarInput(1, &max_wordlen));
+    
+    shape_inference::ShapeHandle out;
+    TF_RETURN_IF_ERROR(c->Concatenate(c->input(0), c->Vector(max_wordlen), &out));
+    c->set_output(0, out);
     return Status::OK();
 });
 
@@ -19,20 +24,20 @@ REGISTER_OP("WordToIdx")
 class WordToIdxOp : public OpKernel {
 public:
 
-    explicit WordToIdxOp(OpKernelConstruction* context) : OpKernel(context) {
-        // Get the index of the value to preserve
-        OP_REQUIRES_OK(context,
-                context->GetAttr("max_wordlen", &_max_wordlen));
-        // Check that preserve_index is positive
-        OP_REQUIRES(context, _max_wordlen > 0,
-                errors::InvalidArgument("Need max_wordlen > 0, got ",
-                _max_wordlen));
-    }
+    explicit WordToIdxOp(OpKernelConstruction* context) : OpKernel(context) {}
 
-    void Compute(OpKernelContext* context) { // override {
+    void Compute(OpKernelContext* context)  { // override {
         // Grab the input tensor
         const Tensor& input_tensor = context->input(0);
         auto input = input_tensor.flat<std::string>();
+
+        const Tensor& max_wordlen = context->input(1);
+        auto tmp = max_wordlen.flat<int>();
+        OP_REQUIRES(context, tmp.size() == 1,
+                    errors::InvalidArgument("Need to provide one input for max_wordlen: ",tmp.size()));
+        int _max_wordlen = tmp(0);
+        OP_REQUIRES(context, _max_wordlen > 0,
+                    errors::InvalidArgument("_max_wordlen needs to be greater than 0: ",_max_wordlen));
         
         // Create an output tensor
         Tensor* output_tensor = NULL;
