@@ -19,16 +19,15 @@ def last_relevant(output, length):
     relevant = tf.gather(flat, index)
     return relevant
 
-def recurrent_model(output_size, words, max_wordlen, name):
-    with tf.variable_scope(name):
-        character_idxs = word2idx.word_to_idx(words, max_wordlen)
-        character_idxs.set_shape([None, max_wordlen])
-        chars_onehot = tf.one_hot(character_idxs, NUM_CHARACTERS)
-        seqlen = length(chars_onehot)
-        output, state = tf.nn.dynamic_rnn(
-            tf.nn.rnn_cell.LSTMCell(output_size),
-            chars_onehot,
-            dtype=tf.float32,
-            sequence_length=seqlen
-        )
-        return last_relevant(output, seqlen)
+def recurrent_model(words, max_wordlen, rnn_cell):
+    character_idxs = word2idx.word_to_idx(words, max_wordlen)
+    character_idxs.set_shape([None, max_wordlen])
+    chars_onehot = tf.one_hot(character_idxs, NUM_CHARACTERS)
+    seqlen = length(chars_onehot)
+    output, state = tf.nn.dynamic_rnn(
+        rnn_cell,
+        chars_onehot,
+        dtype=tf.float32,
+        sequence_length=seqlen,
+    )
+    return last_relevant(output, seqlen)
