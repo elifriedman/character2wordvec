@@ -37,7 +37,7 @@ flags.DEFINE_integer("num_neg_samples", 100,
 flags.DEFINE_integer("batch_size", 16,
                      "Number of training examples processed per step "
                      "(size of a minibatch).")
-flags.DEFINE_integer("concurrent_steps", 12,
+flags.DEFINE_integer("num_threads", 8,
                      "The number of concurrent training steps.")
 flags.DEFINE_integer("window_size", 5,
                      "The number of words to predict to the left and right "
@@ -90,7 +90,7 @@ class Options(object):
     self.epochs_to_train = FLAGS.epochs_to_train
 
     # Concurrent training steps.
-    self.concurrent_steps = FLAGS.concurrent_steps
+    self.num_threads = FLAGS.num_threads
 
     # Number of examples for one training step.
     self.batch_size = FLAGS.batch_size
@@ -134,6 +134,7 @@ class Word2Vec(object):
     self._id2word = []
     self.build_graph()
     session.run(tf.initialize_all_variables())
+    self.saver = tf.train.Saver()
 
   def build_graph(self):
     """Build the graph for the full model."""
@@ -165,10 +166,7 @@ class Word2Vec(object):
     self._loss = loss
     self.optimize(loss)
 
-    # Properly initialize all variables.
-#    tf.initialize_all_variables().run()
-#
-#    self.saver = tf.train.Saver()
+    
 
   def forward(self, examples, labels, words, max_wordlen):
     """Build the graph for the forward pass."""
@@ -260,6 +258,50 @@ class Word2Vec(object):
                                global_step=self.global_step,
                                gate_gradients=optimizer.GATE_NONE)
     self._train = train
+
+   def _train_thread_body(self):
+       initial_epoch, = self._session.run([self._epoch])
+       epoch = initial_epoch
+       while epoch == initial_epoch:
+           _, epoch = self._session.run([self._train, self._epoch])
+
+  def train(self, num_epochs):
+    """Train the model."""
+    opts = self._options
+
+    initial_epoch, initial_words = self._session.run([self._epoch, self._words])
+
+    workers = []
+    for _ in xrange(opts.num_threads):
+      t = threading.Thread(target=self._train_thread_body)
+      t.start()
+      workers.append(t)
+
+    last_words, last_time, last_summary_time = initial_words, time.time(), 0
+    last_checkpoint_time = 0
+    epoch = initial_epoch
+    while epoch < initial_epoch + num_epochs: # run for num_epochs
+        time.sleep(opts.statistics_interval)  # Reports our progress once a while.
+        (epoch, step, loss, words, lr) = self._session.run(
+            [self._epoch, self.global_step, self._loss, self._words, self._lr])
+        now = time.time()
+        last_words, last_time, rate = words, now, (words - last_words) / (
+            now - last_time)
+        print("Epoch %4d Step %8d: lr = %5.3f loss = %6.2f words/sec = %8.0f\r" %
+              (epoch, step, lr, loss, rate), end="")
+        sys.stdout.flush()
+        if now - last_checkpoint_time > opts.checkpoint_interval:
+            self.saver.save(self._session,
+                            os.path.join(opts.save_path, "model.ckpt"),
+                            global_step=step.astype(int))
+            last_checkpoint_time = now
+
+    for t in workers:
+      t.join()
+
+    return epoch
+   
+
 
 
 def init():
