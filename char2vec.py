@@ -19,22 +19,22 @@ flags = tf.app.flags
 
 flags.DEFINE_string("save_path", "output/", "Directory to write the model and "
                     "training summaries.")
-flags.DEFINE_string("train_data", "data/text8_small", "Training text file. "
+flags.DEFINE_string("train_data", "datasets/text8_small", "Training text file. "
                     "E.g., unzipped file http://mattmahoney.net/dc/text8.zip.")
 flags.DEFINE_string(
     "eval_data", None, "File consisting of analogies of four tokens."
     "embedding 2 - embedding 1 + embedding 3 should be close "
     "to embedding 4."
     "See README.md for how to get 'questions-words.txt'.")
-flags.DEFINE_integer("embedding_size", 512, "The embedding dimension size.")
+flags.DEFINE_integer("embedding_size", 256, "The embedding dimension size.")
 flags.DEFINE_integer(
     "epochs_to_train", 15,
     "Number of epochs to train. Each epoch processes the training data once "
     "completely.")
 flags.DEFINE_float("learning_rate", 0.2, "Initial learning rate.")
-flags.DEFINE_integer("num_neg_samples", 100,
+flags.DEFINE_integer("num_neg_samples", 10,
                      "Negative samples per training example.")
-flags.DEFINE_integer("batch_size", 16,
+flags.DEFINE_integer("batch_size", 32,
                      "Number of training examples processed per step "
                      "(size of a minibatch).")
 flags.DEFINE_integer("num_threads", 8,
@@ -133,6 +133,7 @@ class Word2Vec(object):
     self._word2id = {}
     self._id2word = []
     self.build_graph()
+    self.embed = self.build_embed_graph()
     session.run(tf.initialize_all_variables())
     self.saver = tf.train.Saver()
 
@@ -150,6 +151,7 @@ class Word2Vec(object):
      opts.words_per_epoch) = self._session.run([words, counts, words_per_epoch])
     max_wordlen = 0
     max_wordlen = reduce(lambda cur_max_wordlen, val: max(cur_max_wordlen, len(val)), opts.vocab_words, max_wordlen)
+    self.max_wordlen = max_wordlen
 
     opts.vocab_size = len(opts.vocab_words)
     print("Data file: ", opts.train_data)
@@ -165,8 +167,6 @@ class Word2Vec(object):
     tf.scalar_summary("NCE loss", loss)
     self._loss = loss
     self.optimize(loss)
-
-    
 
   def forward(self, examples, labels, words, max_wordlen):
     """Build the graph for the forward pass."""
@@ -239,31 +239,53 @@ class Word2Vec(object):
 
     # NCE-loss is the sum of the true and noise (sampled words)
     # contributions, averaged over the batch.
-    nce_loss_tensor = (tf.reduce_sum(true_xent) +
+    nce_loss_tensor = (tf.reduce_sum(true_xent)*opts.num_samples +
                        tf.reduce_sum(sampled_xent)) / opts.batch_size
     return nce_loss_tensor
 
   def optimize(self, loss):
-    """Build the graph to optimize the loss function."""
+      """Build the graph to optimize the loss function."""
 
-    # Optimizer nodes.
-    # Linear learning rate decay.
+      # Optimizer nodes.
+      # Linear learning rate decay.
+      opts = self._options
+      words_to_train = float(opts.words_per_epoch * opts.epochs_to_train)
+      lr = opts.learning_rate * tf.maximum(
+          0.0001, 1.0 - tf.cast(self._words, tf.float32) / words_to_train)
+      self._lr = lr
+      optimizer = tf.train.AdamOptimizer(learning_rate=0.001, beta1=0.9, beta2=0.999, epsilon=1e-08)
+      train = optimizer.minimize(loss,
+                                 global_step=self.global_step,
+                                 gate_gradients=optimizer.GATE_NONE)
+      self._train = train
+
+  def build_embed_graph(self):
+    """Build the graph for the forward pass."""
     opts = self._options
-    words_to_train = float(opts.words_per_epoch * opts.epochs_to_train)
-    lr = opts.learning_rate * tf.maximum(
-        0.0001, 1.0 - tf.cast(self._words, tf.float32) / words_to_train)
-    self._lr = lr
-    optimizer = tf.train.GradientDescentOptimizer(lr)
-    train = optimizer.minimize(loss,
-                               global_step=self.global_step,
-                               gate_gradients=optimizer.GATE_NONE)
-    self._train = train
+    max_wordlen = self.max_wordlen
 
-   def _train_thread_body(self):
-       initial_epoch, = self._session.run([self._epoch])
-       epoch = initial_epoch
-       while epoch == initial_epoch:
-           _, epoch = self._session.run([self._train, self._epoch])
+    words = tf.placeholder(tf.string)
+
+    lstm_cell = tf.nn.rnn_cell.LSTMCell(opts.emb_dim) # I think I can reuse this
+
+    # Embeddings for examples: [batch_size, emb_dim]
+    with tf.variable_scope("words", reuse=True):
+        example_emb = char_rnn.recurrent_model(words, max_wordlen, lstm_cell, False)
+
+#    # Weights for sampled ids: [num_sampled, emb_dim]
+    with tf.variable_scope("contexts", reuse=True):
+        sampled_emb = char_rnn.recurrent_model(words, max_wordlen, lstm_cell, False)
+
+    def embed(wordlist):
+        return self._session.run([example_emb, sampled_emb], feed_dict={words: wordlist})
+    return embed
+
+
+  def _train_thread_body(self):
+      initial_epoch, = self._session.run([self._epoch])
+      epoch = initial_epoch
+      while epoch == initial_epoch:
+          _, epoch = self._session.run([self._train, self._epoch])
 
   def train(self, num_epochs):
     """Train the model."""

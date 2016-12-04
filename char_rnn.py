@@ -19,7 +19,7 @@ def last_relevant(output, length):
     relevant = tf.gather(flat, index)
     return relevant
 
-def recurrent_model(words, max_wordlen, rnn_cell):
+def recurrent_model(words, max_wordlen, rnn_cell, output_last=True):
     character_idxs = word2idx.word_to_idx(words, max_wordlen)
     character_idxs.set_shape([None, max_wordlen])
     chars_onehot = tf.one_hot(character_idxs, NUM_CHARACTERS)
@@ -30,4 +30,4 @@ def recurrent_model(words, max_wordlen, rnn_cell):
         dtype=tf.float32,
         sequence_length=seqlen,
     )
-    return last_relevant(output, seqlen)
+    return last_relevant(output, seqlen) if output_last else output
